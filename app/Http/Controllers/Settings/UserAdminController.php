@@ -3,10 +3,12 @@
 namespace App\Http\Controllers\Settings;
 
 use App\Http\Controllers\Controller;
+use App\Mail\InvitationMail;
 use App\Models\Invitation;
 use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Mail;
 use Illuminate\Validation\Rule;
 
 class UserAdminController extends Controller
@@ -22,8 +24,9 @@ class UserAdminController extends Controller
     }
 
     /**
-     * Invite a user: creates an account in 'invited' status. No code is sent —
-     * the user requests an OTP from the login screen themselves.
+     * Invite a user: creates an account in 'invited' status and emails them a
+     * link to the login screen. No code is sent — the user requests an OTP
+     * themselves from that screen.
      */
     public function invite(Request $request): JsonResponse
     {
@@ -47,7 +50,29 @@ class UserAdminController extends Controller
             'user_id' => $user->id,
         ]);
 
+        $this->sendInvitation($user);
+
         return response()->json(['data' => $this->payload($user)], 201);
+    }
+
+    /**
+     * Email the invitee a pointer to the login screen. Mail failures must not
+     * fail the invite itself (the account is already created).
+     */
+    private function sendInvitation(User $user): void
+    {
+        $roleLabel = match ($user->role) {
+            'admin' => 'an Admin',
+            'external' => 'an External collaborator',
+            default => 'a Team member',
+        };
+        $loginUrl = rtrim(config('app.frontend_url', ''), '/') . '/login';
+
+        try {
+            Mail::to($user->email)->send(new InvitationMail($user->name, $roleLabel, $loginUrl));
+        } catch (\Throwable $e) {
+            report($e);
+        }
     }
 
     public function update(Request $request, User $user): JsonResponse
@@ -68,16 +93,34 @@ class UserAdminController extends Controller
         return response()->json(['data' => $this->payload($user)]);
     }
 
-    public function destroy(Request $request, User $user): JsonResponse
+    /**
+     * Soft-disable a user and revoke their tokens, preserving history.
+     */
+    public function deactivate(Request $request, User $user): JsonResponse
     {
         if ($user->id === $request->user()->id) {
             return response()->json(['message' => 'You cannot deactivate your own account.'], 422);
         }
-        // Deactivate (revoke tokens) rather than hard-delete to preserve history.
         $user->update(['status' => 'disabled']);
         $user->tokens()->delete();
 
         return response()->json(['message' => 'User deactivated.']);
+    }
+
+    /**
+     * Permanently delete a user. Schema FKs handle the rest: project access is
+     * detached (cascade), comments and usage events keep their rows with a null
+     * user_id. Tokens have no FK cascade, so revoke them explicitly first.
+     */
+    public function destroy(Request $request, User $user): JsonResponse
+    {
+        if ($user->id === $request->user()->id) {
+            return response()->json(['message' => 'You cannot delete your own account.'], 422);
+        }
+        $user->tokens()->delete();
+        $user->delete();
+
+        return response()->json(['message' => 'User deleted.']);
     }
 
     private function payload(User $u): array

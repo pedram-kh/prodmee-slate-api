@@ -81,6 +81,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/users', [UserAdminController::class, 'index']);
         Route::post('/users', [UserAdminController::class, 'invite']);
         Route::put('/users/{user}', [UserAdminController::class, 'update']);
+        Route::post('/users/{user}/deactivate', [UserAdminController::class, 'deactivate']);
         Route::delete('/users/{user}', [UserAdminController::class, 'destroy']);
 
         Route::get('/api-key', [ApiKeyController::class, 'show']);
