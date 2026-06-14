@@ -1,0 +1,10 @@
+region            = "eu-west-1"
+project           = "prodmee-slate"
+root_domain       = "prodmee.app"
+app_domain        = "slate.prodmee.app"
+api_domain        = "api.slate.prodmee.app"
+db_username       = "prodmee"
+db_password       = "change-me-strong-password"
+app_key           = "base64:GENERATE_WITH_php_artisan_key:generate"
+anthropic_api_key = ""
+desired_count     = 2

@@ -1,0 +1,47 @@
+# Local development stack: Laravel API + PostgreSQL.
+services:
+  api:
+    build: .
+    ports:
+      - "8001:8080"
+    # These real env vars take precedence over .env, so the container always
+    # talks to the bundled Postgres regardless of local .env contents.
+    environment:
+      RUN_MIGRATIONS: "true"
+      APP_ENV: "local"
+      APP_DEBUG: "true"
+      APP_URL: "http://localhost:8001"
+      FRONTEND_URL: "http://localhost:5173"
+      DB_CONNECTION: "pgsql"
+      DB_HOST: "db"
+      DB_PORT: "5432"
+      DB_DATABASE: "prodmee_slate"
+      DB_USERNAME: "prodmee"
+      DB_PASSWORD: "secret"
+      CACHE_STORE: "database"
+      SESSION_DRIVER: "database"
+      QUEUE_CONNECTION: "sync"
+      MAIL_MAILER: "log"
+    env_file:
+      - .env
+    depends_on:
+      - db
+    volumes:
+      - .:/var/www
+      # Keep the image's Linux vendor/ instead of the host's macOS one.
+      - /var/www/vendor
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: prodmee_slate
+      POSTGRES_USER: prodmee
+      POSTGRES_PASSWORD: secret
+    ports:
+      # Host 5434 -> container 5432 to avoid clashing with other local Postgres.
+      - "5434:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+volumes:
+  pgdata:
