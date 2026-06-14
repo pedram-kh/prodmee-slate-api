@@ -21,11 +21,19 @@ services:
       CACHE_STORE: "database"
       SESSION_DRIVER: "database"
       QUEUE_CONNECTION: "sync"
-      MAIL_MAILER: "log"
+      MAIL_MAILER: "smtp"
+      MAIL_HOST: "mailhog"
+      MAIL_PORT: "1025"
+      MAIL_USERNAME: ""
+      MAIL_PASSWORD: ""
+      MAIL_ENCRYPTION: ""
+      MAIL_FROM_ADDRESS: "no-reply@prodmee.test"
+      MAIL_FROM_NAME: "Prodmee Slate"
     env_file:
       - .env
     depends_on:
       - db
+      - mailhog
     volumes:
       - .:/var/www
       # Keep the image's Linux vendor/ instead of the host's macOS one.
@@ -42,6 +50,13 @@ services:
       - "5434:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+
+  # Catches all outgoing mail (OTP codes) — view them at http://localhost:8026
+  mailhog:
+    image: mailhog/mailhog
+    ports:
+      # Host 8026 -> MailHog web UI (8025 is used by another local stack).
+      - "8026:8025"
 
 volumes:
   pgdata:
