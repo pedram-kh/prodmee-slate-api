@@ -151,6 +151,9 @@ resource "aws_ecs_task_definition" "api" {
       { name = "APP_ENV", value = "production" },
       { name = "APP_URL", value = "https://${var.api_domain}" },
       { name = "FRONTEND_URL", value = "https://${var.app_domain}" },
+      # Send Laravel app logs to stderr so they reach the CloudWatch log group.
+      { name = "LOG_CHANNEL", value = "stderr" },
+      { name = "LOG_LEVEL", value = "info" },
       { name = "DB_CONNECTION", value = "pgsql" },
       { name = "DB_HOST", value = aws_db_instance.postgres.address },
       { name = "DB_PORT", value = "5432" },
