@@ -78,7 +78,7 @@ return [
     ],
 
     'ai' => [
-        'model' => env('ANTHROPIC_MODEL', 'claude-sonnet-4-20250514'),
+        'model' => env('ANTHROPIC_MODEL', 'claude-sonnet-4-6'),
         'version' => env('ANTHROPIC_VERSION', '2023-06-01'),
         'base_url' => env('ANTHROPIC_BASE_URL', 'https://api.anthropic.com'),
         'max_tokens' => 1000,
