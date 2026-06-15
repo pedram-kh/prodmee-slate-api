@@ -16,16 +16,16 @@ class DatabaseSeeder extends Seeder
     {
         // Ported from seed() in prodmee-slate25.html. Keys map old m*/c* ids -> users.
         $members = [
-            'm1' => ['Guillaume de Fonvielle', 'CEO / Direction', 'admin'],
-            'm2' => ['Elena Ruiz', 'Head of Development', 'member'],
-            'm3' => ['Marco Téllez', 'Producer', 'member'],
-            'm4' => ['Sofía Belmonte', 'Executive Producer', 'member'],
-            'm5' => ['Diego Arenas', 'Line Producer', 'member'],
-            'm6' => ['Lucía Naranjo', 'Casting Director', 'member'],
-            'm7' => ['Pablo Sáenz', 'Script Development', 'member'],
-            'm8' => ['Carmen Vidal', 'Legal / Affairs', 'member'],
-            'm9' => ['Tomás Iriarte', 'International Sales', 'member'],
-            'm10' => ['Renata Solís', 'Coordination', 'member'],
+            'm1' => ['Guillaume de Fonvielle', 'CEO / Direction', 'admin', 'guillaume.defonvielle@prodmee.com'],
+            'm2' => ['Elena Ruiz', 'Head of Development', 'member', null],
+            'm3' => ['Marco Téllez', 'Producer', 'member', null],
+            'm4' => ['Sofía Belmonte', 'Executive Producer', 'member', null],
+            'm5' => ['Diego Arenas', 'Line Producer', 'member', null],
+            'm6' => ['Lucía Naranjo', 'Casting Director', 'member', null],
+            'm7' => ['Pablo Sáenz', 'Script Development', 'member', null],
+            'm8' => ['Carmen Vidal', 'Legal / Affairs', 'member', null],
+            'm9' => ['Tomás Iriarte', 'International Sales', 'member', null],
+            'm10' => ['Renata Solís', 'Coordination', 'member', null],
         ];
         $collaborators = [
             'c1' => ['Andrés Quevedo', 'Screenwriter'],
@@ -34,10 +34,10 @@ class DatabaseSeeder extends Seeder
         ];
 
         $ref = [];
-        foreach ($members as $key => [$name, $role, $type]) {
+        foreach ($members as $key => [$name, $role, $type, $email]) {
             $ref[$key] = User::create([
                 'name' => $name,
-                'email' => $this->emailFor($name),
+                'email' => $email ?? $this->emailFor($name),
                 'role' => $type,
                 'status' => 'active',
                 'email_verified_at' => now(),
