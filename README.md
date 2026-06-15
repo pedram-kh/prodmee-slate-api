@@ -62,5 +62,6 @@ php artisan test
 ```
 
 ## Deployment
-See [DEPLOY.md](DEPLOY.md) — Terraform in `infra/` provisions ECS Fargate, RDS,
-S3, CloudFront, SES, Route 53/ACM and Secrets Manager; GitHub Actions deploys.
+See [deployment-guide.md](deployment-guide.md) — Terraform in `infra/` provisions
+ECS Fargate, RDS, S3, CloudFront, SES, Route 53/ACM and Secrets Manager; GitHub
+Actions deploys. Deploy this repo before `prodmee-slate-web`.
