@@ -4,8 +4,11 @@ namespace App\Services;
 
 use App\Models\Buyer;
 use App\Models\Project;
+use App\Models\ProjectFile;
 use App\Models\User;
 use App\Support\Slate;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 
 class Sicala
 {
@@ -29,6 +32,7 @@ Respond with ONLY a JSON object (no markdown fences, no text outside JSON):
 - {"type":"create_pitch","project":"...","buyer":"<platform name>","status":"<pitch status id>"}
 - {"type":"add_comment","project":"...","text":"..."}
 - {"type":"set_checklist","project":"...","item":"<checklist item label or id>","done":true}
+- {"type":"place_file","file":<ref number from pendingFiles>,"project":"...","slot":"cover|budget|script|bible|file","label":"..."}
 
 Rules:
 - Only include actions the user clearly requested. If they just ask a question, return an empty actions array and answer in "reply".
@@ -38,11 +42,13 @@ Rules:
 - You have each visible project's full details below — discuss or answer about ANY field (logline, tagline, concept, why-now, references, cast, format, language, episodes, territory, packaging, budget, origin, notes).
 - When the user asks you to write/draft/develop/improve/fill one or more fields, generate strong content and apply it with set_field actions (one action per field). Keep each generated value concise (about 1-3 sentences). Use the listed allowed values for format, genre and tier.
 - Each project has a production checklist (see 'checklist' with done/total and pending item labels). You can tell the user what is done or pending, and check/uncheck steps with set_checklist (match the item by its label).
+- Attached PDFs/images may be scripts, a series bible, a cover/poster or a budget. Read them and answer questions (summaries, characters, structure, tone, notes) in "reply" with empty actions, unless the user also asks for an action.
+- The user can attach files to the chat (see 'pendingFiles': each has a ref, name and kind). When they ask to put an attached file on a project, return a place_file action referencing it by ref. Pick 'slot': cover (poster/cover image), budget (budget spreadsheet/PDF), script (screenplay PDF), bible (series bible), or file (anything else). Infer the slot from the file kind and the user's words. Use 'label' for episode/version names. If the target project or slot is unclear, ask in "reply".
 
 Current app data (JSON):
 PROMPT;
 
-    public function buildContext(User $user): array
+    public function buildContext(User $user, array $attachments = []): array
     {
         $projects = Project::visibleTo($user)
             ->with(['members', 'collaborators', 'links', 'checklist'])
@@ -52,6 +58,11 @@ PROMPT;
         $flat = collect(Slate::checklistFlat());
 
         return [
+            'pendingFiles' => collect($attachments)->values()->map(fn ($a, $i) => [
+                'ref' => $i,
+                'name' => $a['name'] ?? 'file',
+                'kind' => $this->kindFromMime($a['mime_type'] ?? ''),
+            ]),
             'stages' => $stages->map(fn ($s) => ['id' => $s['id'], 'label' => $s['label']])->values(),
             'pitchStatuses' => collect(config('slate.pitch_statuses'))->map(fn ($s) => ['id' => $s['id'], 'label' => $s['label']])->values(),
             'formats' => config('slate.formats'),
@@ -97,7 +108,7 @@ PROMPT;
      *
      * @return array{summaries: array<int,string>, changed: bool}
      */
-    public function executeActions(User $user, array $actions): array
+    public function executeActions(User $user, array $actions, array $attachments = []): array
     {
         $out = [];
         $changed = false;
@@ -223,6 +234,8 @@ PROMPT;
                     } else {
                         $out[] = '⚠ Project not found: ' . ($a['project'] ?? '');
                     }
+                } elseif ($type === 'place_file') {
+                    $out[] = $this->placeFile($user, $a, $attachments, $changed);
                 } else {
                     $out[] = '⚠ Unsupported action: ' . $type;
                 }
@@ -232,6 +245,92 @@ PROMPT;
         }
 
         return ['summaries' => $out, 'changed' => $changed];
+    }
+
+    /**
+     * Place a chat attachment onto a project: copy the temp S3 object into the
+     * project's path and persist a ProjectFile row (cover replaces the old one).
+     *
+     * @param  array  $a  The place_file action.
+     * @param  array  $attachments  [{key, name, mime_type}]
+     */
+    private function placeFile(User $user, array $a, array $attachments, bool &$changed): string
+    {
+        $p = $this->resolveProject($user, $a['project'] ?? null);
+        if (! $p) {
+            return '⚠ Project not found: ' . ($a['project'] ?? '');
+        }
+
+        $ref = $a['file'] ?? null;
+        $pf = null;
+        if (is_int($ref) || (is_string($ref) && ctype_digit($ref))) {
+            $pf = $attachments[(int) $ref] ?? null;
+        }
+        if (! $pf && $ref !== null && $ref !== '') {
+            $r = strtolower(trim((string) $ref));
+            $pf = collect($attachments)->first(fn ($x) => strtolower($x['name'] ?? '') === $r)
+                ?? collect($attachments)->first(fn ($x) => str_contains(strtolower($x['name'] ?? ''), $r));
+        }
+        if (! $pf && count($attachments) === 1) {
+            $pf = $attachments[0];
+        }
+        if (! $pf || empty($pf['key'])) {
+            return '⚠ No matching attached file.';
+        }
+
+        $slot = strtolower((string) ($a['slot'] ?? 'file'));
+        if (! in_array($slot, ['cover', 'budget', 'script', 'bible', 'file'], true)) {
+            $slot = 'file';
+        }
+
+        $name = $pf['name'] ?? 'file';
+        $safe = Str::slug(pathinfo($name, PATHINFO_FILENAME)) ?: 'file';
+        $ext = pathinfo($name, PATHINFO_EXTENSION);
+        $newKey = sprintf('projects/%d/%s/%s-%s%s', $p->id, $slot, $safe, Str::random(8), $ext ? '.' . $ext : '');
+
+        Storage::disk('s3')->copy($pf['key'], $newKey);
+
+        // A project has at most one cover; replace the previous one (mirrors FileController).
+        if ($slot === 'cover') {
+            $p->files()->where('slot', 'cover')->get()->each(function (ProjectFile $f) {
+                Storage::disk('s3')->delete($f->s3_key);
+                $f->delete();
+            });
+            if ($p->cover_key) {
+                Storage::disk('s3')->delete($p->cover_key);
+            }
+            $p->update(['cover_key' => $newKey]);
+        }
+
+        $p->files()->create([
+            'slot' => $slot,
+            's3_key' => $newKey,
+            'name' => $name,
+            'label' => $a['label'] ?? null,
+            'mime_type' => $pf['mime_type'] ?? null,
+            'size' => null,
+        ]);
+
+        $changed = true;
+
+        return $slot === 'cover'
+            ? '✓ Set cover of "' . $p->title . '"'
+            : '✓ Added ' . $slot . ' to "' . $p->title . '"';
+    }
+
+    private function kindFromMime(string $mime): string
+    {
+        if (str_starts_with($mime, 'image/')) {
+            return 'image';
+        }
+        if ($mime === 'application/pdf') {
+            return 'pdf';
+        }
+        if (str_starts_with($mime, 'video/')) {
+            return 'video';
+        }
+
+        return 'file';
     }
 
     private function resolveProject(User $user, $ref): ?Project

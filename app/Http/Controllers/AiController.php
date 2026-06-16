@@ -9,6 +9,7 @@ use App\Services\Sicala;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 
 class AiController extends Controller
 {
@@ -28,13 +29,20 @@ class AiController extends Controller
             'messages' => ['required', 'array', 'min:1'],
             'messages.*.role' => ['required', 'in:user,assistant'],
             'messages.*.content' => ['required', 'string'],
+            'attachments' => ['nullable', 'array'],
+            'attachments.*.key' => ['required', 'string', 'max:1024'],
+            'attachments.*.name' => ['required', 'string', 'max:255'],
+            'attachments.*.mime_type' => ['nullable', 'string', 'max:255'],
         ]);
 
         $user = $request->user();
-        $system = Sicala::SYSTEM_PROMPT . "\n" . json_encode($this->sicala->buildContext($user));
+        $attachments = $data['attachments'] ?? [];
+        $system = Sicala::SYSTEM_PROMPT . "\n" . json_encode($this->sicala->buildContext($user, $attachments));
+
+        $messages = $this->injectAttachmentBlocks($data['messages'], $attachments);
 
         try {
-            $result = $this->anthropic->messages($data['messages'], $system, config('slate.ai.max_tokens'));
+            $result = $this->anthropic->messages($messages, $system, config('slate.ai.max_tokens'));
         } catch (\Throwable $e) {
             return response()->json(['message' => $e->getMessage()], 502);
         }
@@ -46,13 +54,86 @@ class AiController extends Controller
             $obj = ['reply' => $result['text'] ?: '(no response)', 'actions' => []];
         }
 
-        $exec = $this->sicala->executeActions($user, $obj['actions'] ?? []);
+        $exec = $this->sicala->executeActions($user, $obj['actions'] ?? [], $attachments);
 
         return response()->json([
             'reply' => $obj['reply'] ?? 'Done.',
             'summaries' => $exec['summaries'],
             'changed' => $exec['changed'],
         ]);
+    }
+
+    /**
+     * Presign a direct S3 PUT for a chat attachment. Not tied to a project yet —
+     * the file lands under a temp prefix and is only persisted onto a project if
+     * Sicala runs a place_file action.
+     */
+    public function presignAttachment(Request $request): JsonResponse
+    {
+        abort_unless($request->user()->isWriter(), 403, 'Sicala is available to the internal team.');
+
+        $data = $request->validate([
+            'filename' => ['required', 'string', 'max:255'],
+            'content_type' => ['required', 'string', 'max:255'],
+        ]);
+
+        $safe = Str::slug(pathinfo($data['filename'], PATHINFO_FILENAME)) ?: 'file';
+        $ext = pathinfo($data['filename'], PATHINFO_EXTENSION);
+        $key = sprintf('chat-attachments/%d/%s-%s%s', $request->user()->id, $safe, Str::random(10), $ext ? '.' . $ext : '');
+
+        $disk = Storage::disk('s3');
+        ['url' => $url, 'headers' => $headers] = $disk->temporaryUploadUrl(
+            $key,
+            now()->addMinutes(10),
+            ['ContentType' => $data['content_type']]
+        );
+
+        return response()->json(['url' => $url, 'key' => $key, 'headers' => $headers]);
+    }
+
+    /**
+     * Build Claude document/image blocks for readable attachments (PDF/image) and
+     * prepend them to the latest user message so Sicala can read them.
+     *
+     * @param  array  $messages  [{role, content:string}]
+     * @param  array  $attachments  [{key, name, mime_type}]
+     */
+    private function injectAttachmentBlocks(array $messages, array $attachments): array
+    {
+        $blocks = [];
+        foreach (array_slice($attachments, 0, 5) as $a) {
+            $mime = (string) ($a['mime_type'] ?? '');
+            $isImage = str_starts_with($mime, 'image/');
+            $isPdf = $mime === 'application/pdf';
+            if (! $isImage && ! $isPdf) {
+                continue;
+            }
+            try {
+                $bytes = Storage::disk('s3')->get($a['key']);
+            } catch (\Throwable $e) {
+                continue;
+            }
+            $b64 = base64_encode($bytes);
+            if ($isPdf) {
+                $blocks[] = ['type' => 'document', 'source' => ['type' => 'base64', 'media_type' => 'application/pdf', 'data' => $b64]];
+            } else {
+                $blocks[] = ['type' => 'image', 'source' => ['type' => 'base64', 'media_type' => $mime, 'data' => $b64]];
+            }
+        }
+
+        if (! $blocks) {
+            return $messages;
+        }
+
+        for ($i = count($messages) - 1; $i >= 0; $i--) {
+            if (($messages[$i]['role'] ?? null) === 'user') {
+                $text = (string) ($messages[$i]['content'] ?? '');
+                $messages[$i]['content'] = array_merge($blocks, [['type' => 'text', 'text' => $text]]);
+                break;
+            }
+        }
+
+        return $messages;
     }
 
     /**

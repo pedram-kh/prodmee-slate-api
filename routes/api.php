@@ -75,6 +75,7 @@ Route::middleware('auth:sanctum')->group(function () {
     // Sicala AI
     Route::post('/ai/assistant', [AiController::class, 'assistant']);
     Route::post('/ai/autofill', [AiController::class, 'autofill']);
+    Route::post('/ai/attachments/presign', [AiController::class, 'presignAttachment']);
 
     // ---- Admin-only Settings ----
     Route::middleware('admin')->prefix('settings')->group(function () {
