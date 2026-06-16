@@ -37,7 +37,7 @@ class ProjectResource extends JsonResource
             'participants' => $this->participants,
             'packaging' => $this->packaging,
             'notes' => $this->notes,
-            'coverUrl' => $this->cover_key ? Storage::disk('s3')->url($this->cover_key) : null,
+            'coverUrl' => $this->cover_key ? $this->coverUrl() : null,
             'shareToken' => $this->share_token,
             'members' => $this->whenLoaded('members', fn () => $this->members->map(fn ($u) => self::person($u))),
             'collaborators' => $this->whenLoaded('collaborators', fn () => $this->collaborators->map(fn ($u) => self::person($u))),
@@ -53,6 +53,15 @@ class ProjectResource extends JsonResource
             'checkDone' => (object) $checklist,
             'checklist' => ['done' => $done, 'total' => $total, 'pct' => $total ? (int) round($done / $total * 100) : 0],
         ];
+    }
+
+    private function coverUrl(): ?string
+    {
+        try {
+            return Storage::disk('s3')->temporaryUrl($this->cover_key, now()->addMinutes(30));
+        } catch (\Throwable $e) {
+            return null;
+        }
     }
 
     public static function person($u): array
